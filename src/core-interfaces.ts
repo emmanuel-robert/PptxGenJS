@@ -15,7 +15,13 @@ import { CHART_NAME, PLACEHOLDER_TYPE, SHAPE_NAME, SLIDE_OBJECT_TYPES, TEXT_HALI
  * @example 10.25 // coordinate in inches
  * @example '75%' // coordinate as percentage of slide size
  */
-export type Coord = number | `${number}%`
+export type Coord = number | `${number}%` | string
+
+export type IDCoord = {
+	id:number
+	posistion: PositionProps
+}
+
 export interface PositionProps {
 	/**
 	 * Horizontal position
@@ -245,6 +251,32 @@ export interface ShapeLineProps extends ShapeFillProps {
 	 * @deprecated v3.3.0 - use `width`
 	 */
 	size?: number
+	/**
+	 * Set line shape to be connector
+	 * @default false
+	 */
+	isConnector?: boolean
+	/**
+	 * connected source shape id
+	 */
+	sourceId?: number
+	/**
+	 * connected target shape id
+	 */
+	targetId?: number
+	/**
+	 * source shape connection position (dependent on available connection points on a shape)
+	 */
+	sourceAnchorPos?: number
+	/**
+	 * target shape connection position (dependent on available connection points on a shape)
+	 */
+	targetAnchorPos?: number
+	/**
+	 * adjustments to the curve
+	 */
+	 curveadjust?: number[]
+
 }
 // used by: chart, slide, table, text
 export interface TextBaseProps {
@@ -712,6 +744,10 @@ export interface ShapeProps extends PositionProps, ObjectNameProps {
 	 * @deprecated v3.10.0 - use `objectName`
 	 */
 	shapeName?: string
+	/**
+     * id of shape
+     */
+	sId?: number
 }
 
 // tables =========================================================================================

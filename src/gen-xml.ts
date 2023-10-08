@@ -3,6 +3,7 @@
  */
 
 import {
+	ANCHOR,
 	BULLET_TYPES,
 	CRLF,
 	DEF_BULLET_MARGIN,
@@ -17,6 +18,9 @@ import {
 	SLIDE_OBJECT_TYPES,
 } from './core-enums'
 import {
+	IChartOpts,
+	IDCoord,
+	ImageProps,
 	IPresentationProps,
 	ISlideObject,
 	ISlideRel,
@@ -78,6 +82,23 @@ const ImageSizingXml = {
 }
 
 /**
+ * this function finds the elements of a list based on its id
+ * it is only really used for finding shapes in the coordinates list
+ * this is so the program can caluclate the posistion of connecting lines by itself
+ * @param {IDCoord[]} list 
+ * @param {number} id 
+ */
+
+function FindById(list: IDCoord[], id: number): IDCoord {
+	for (const element of list) {
+		if (element.id == id) {
+			return element
+		}
+	}
+	console.error("no element in list matching id")
+}
+
+/**
  * Transforms a slide or slideLayout to resulting XML string - Creates `ppt/slide*.xml`
  * @param {PresSlide|SlideLayout} slideObject - slide object created within createSlideObject
  * @return {string} XML string with <p:cSld> as the root
@@ -102,12 +123,47 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 	strSlideXml += '<p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/>'
 	strSlideXml += '<a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>'
 
+	let IDs: number[] = []
+	let coordinates: IDCoord[] = []
+
 	// STEP 3: Loop over all Slide.data objects and add them to this slide
 	slide._slideObjects.forEach((slideItemObj: ISlideObject, idx: number) => {
-		let x = 0
-		let y = 0
-		let cx = getSmartParseNumber('75%', 'X', slide._presLayout)
-		let cy = 0
+		if (slideItemObj.options != undefined) {
+			if (slideItemObj.options.sId != undefined) {
+				if (IDs.indexOf(slideItemObj.options.sId) > -1) {
+					throw "ID is already in use, object / shape id cannot be the same for multiple objects / shapes";
+				} else {
+					IDs.push(slideItemObj.options.sId);
+				}
+
+			} else {
+				if (IDs.indexOf(idx + 2) > -1) {
+					throw "an sID used matched an automatically generated ID try using a higher number";
+				} else {
+					IDs.push(idx + 2);
+				}
+
+			}
+		}
+
+
+
+		if (slideItemObj.options != undefined) {
+			coordinates.push({
+				id: IDs.at(-1),
+				posistion: {
+					x: slideItemObj.options.x,
+					y: slideItemObj.options.y,
+					w: slideItemObj.options.w,
+					h: slideItemObj.options.h
+				}
+			})
+		}
+
+		let x = 0,
+			y = 0,
+			cx = getSmartParseNumber('75%', 'X', slide._presLayout),
+			cy = 0
 		let placeholderObj: ISlideObject
 		let locationAttr = ''
 		let arrTabRows: TableCell[][] = null
@@ -133,14 +189,107 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 		// A: Set option vars
 		slideItemObj.options = slideItemObj.options || {}
 
-		if (typeof slideItemObj.options.x !== 'undefined') x = getSmartParseNumber(slideItemObj.options.x, 'X', slide._presLayout)
-		if (typeof slideItemObj.options.y !== 'undefined') y = getSmartParseNumber(slideItemObj.options.y, 'Y', slide._presLayout)
-		if (typeof slideItemObj.options.w !== 'undefined') cx = getSmartParseNumber(slideItemObj.options.w, 'X', slide._presLayout)
-		if (typeof slideItemObj.options.h !== 'undefined') cy = getSmartParseNumber(slideItemObj.options.h, 'Y', slide._presLayout)
+		//calculates the coordinates for connecting lines, only works for squares with number posistions ( so no percentages)
+		if (slideItemObj.options.line != undefined) {
+			if (slideItemObj.options.line.isConnector) {
+				const source = FindById(coordinates, slideItemObj.options.line.sourceId);
+				const target = FindById(coordinates, slideItemObj.options.line.targetId);
 
-		// Set w/h now that smart parse is done
-		let imgWidth = cx
-		let imgHeight = cy
+
+				let deltaX = 0;
+				let deltaY = 0;
+				//this does not work for triangle because anchorpoint is outside the enum!!!!
+				switch (slideItemObj.options.line.sourceAnchorPos) {
+					case ANCHOR.TOP:
+						deltaX = Number(source.posistion.w) / 2;
+						x = Number(source.posistion.x) + deltaX;
+						y = Number(source.posistion.y)
+						break;
+					case ANCHOR.BOTTOM:
+						deltaX = Number(source.posistion.w) / 2;
+						x = Number(source.posistion.x) + deltaX;
+						deltaY = Number(source.posistion.h)
+						y = Number(source.posistion.y) + deltaY
+						break;
+					case ANCHOR.LEFT:
+						deltaY = Number(source.posistion.h) / 2;
+						y = Number(source.posistion.y) + deltaY;
+						x = Number(source.posistion.x);
+						break;
+					case ANCHOR.RIGHT:
+						deltaY = Number(source.posistion.h) / 2;
+						y = Number(source.posistion.y) + deltaY;
+						deltaX = Number(source.posistion.w)
+						x = Number(source.posistion.x) + deltaX;
+						break;
+				}
+
+				let tx = 0;
+				let ty = 0;
+
+				switch (slideItemObj.options.line.targetAnchorPos) {
+					case ANCHOR.TOP:
+						deltaX = Number(target.posistion.w) / 2;
+						tx = Number(target.posistion.x) + deltaX;
+						ty = Number(target.posistion.y)
+						break;
+					case ANCHOR.BOTTOM:
+						deltaX = Number(target.posistion.w) / 2;
+						tx = Number(target.posistion.x) + deltaX;
+						deltaY = Number(target.posistion.h)
+						ty = Number(target.posistion.y) + deltaY
+						break;
+					case ANCHOR.LEFT:
+						deltaY = Number(target.posistion.h) / 2;
+						ty = Number(target.posistion.y) + deltaY;
+						tx = Number(target.posistion.x);
+						break;
+					case ANCHOR.RIGHT:
+						deltaY = Number(target.posistion.h) / 2;
+						ty = Number(target.posistion.y) + deltaY;
+						deltaX = Number(target.posistion.w)
+						tx = Number(target.posistion.x) + deltaX;
+						break;
+				}
+
+				if (tx > x) {
+					cx = tx - x
+
+					slideItemObj.options.flipH = false;
+				} else {
+					slideItemObj.options.flipH = true;
+					cx = x - tx
+					x = tx;
+				}
+				if (ty > y) {
+					cy = ty - y;
+					slideItemObj.options.flipV = false;
+				} else {
+					cy = y - ty
+					y = ty;
+					slideItemObj.options.flipV = true;
+				}
+
+				x = getSmartParseNumber(x, "X", slide._presLayout);
+				y = getSmartParseNumber(y, "Y", slide._presLayout);
+				cx = getSmartParseNumber(cx, "X", slide._presLayout);
+				cy = getSmartParseNumber(cy, "X", slide._presLayout);
+
+
+			} else {
+				if (typeof slideItemObj.options.x !== 'undefined') x = getSmartParseNumber(slideItemObj.options.x, 'X', slide._presLayout)
+				if (typeof slideItemObj.options.y !== 'undefined') y = getSmartParseNumber(slideItemObj.options.y, 'Y', slide._presLayout)
+				if (typeof slideItemObj.options.w !== 'undefined') cx = getSmartParseNumber(slideItemObj.options.w, 'X', slide._presLayout)
+				if (typeof slideItemObj.options.h !== 'undefined') cy = getSmartParseNumber(slideItemObj.options.h, 'Y', slide._presLayout)
+			}
+		} else {
+			if (typeof slideItemObj.options.x !== 'undefined') x = getSmartParseNumber(slideItemObj.options.x, 'X', slide._presLayout)
+			if (typeof slideItemObj.options.y !== 'undefined') y = getSmartParseNumber(slideItemObj.options.y, 'Y', slide._presLayout)
+			if (typeof slideItemObj.options.w !== 'undefined') cx = getSmartParseNumber(slideItemObj.options.w, 'X', slide._presLayout)
+			if (typeof slideItemObj.options.h !== 'undefined') cy = getSmartParseNumber(slideItemObj.options.h, 'Y', slide._presLayout)
+		}
+
+
 
 		// If using a placeholder then inherit it's position
 		if (placeholderObj) {
@@ -215,7 +364,7 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 				// We have to build an actual grid now
 				/*
 					EX: (A0:rowspan=3, B1:rowspan=2, C1:colspan=2)
-
+	
 					/------|------|------|------\
 					|  A0  |  B0  |  C0  |  D0  |
 					|      |  B1  |  C1  |      |
@@ -297,17 +446,24 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 						const cellOpts = cell.options || {}
 						cell.options = cellOpts
 
-						// B: Inherit some options from table when cell options dont exist
-						// @see: http://officeopenxml.com/drwTableCellProperties-alignment.php
-						;['align', 'bold', 'border', 'color', 'fill', 'fontFace', 'fontSize', 'margin', 'textDirection', 'underline', 'valign'].forEach(name => {
-							if (objTabOpts[name] && !cellOpts[name] && cellOpts[name] !== 0) cellOpts[name] = objTabOpts[name]
-						})
+							// B: Inherit some options from table when cell options dont exist
+							// @see: http://officeopenxml.com/drwTableCellProperties-alignment.php
+							;['align', 'bold', 'border', 'color', 'fill', 'fontFace', 'fontSize', 'margin', 'textDirection', 'underline', 'valign'].forEach(name => {
+								if (objTabOpts[name] && !cellOpts[name] && cellOpts[name] !== 0) cellOpts[name] = objTabOpts[name]
+							})
 
-						const cellValign = cellOpts.valign
-							? ` anchor="${cellOpts.valign.replace(/^c$/i, 'ctr').replace(/^m$/i, 'ctr').replace('center', 'ctr').replace('middle', 'ctr').replace('top', 't').replace('btm', 'b').replace('bottom', 'b')}"`
+						let cellValign = cellOpts.valign
+							? ' anchor="' +
+							cellOpts.valign
+								.replace(/^c$/i, 'ctr')
+								.replace(/^m$/i, 'ctr')
+								.replace('center', 'ctr')
+								.replace('middle', 'ctr')
+								.replace('top', 't')
+								.replace('btm', 'b')
+								.replace('bottom', 'b') +
+							'"'
 							: ''
-						const cellTextDir = (cellOpts.textDirection && cellOpts.textDirection !== 'horz') ? ` vert="${cellOpts.textDirection}"` : ''
-
 						let fillColor =
 							cell._optImp?.fill?.color
 								? cell._optImp.fill.color
@@ -388,55 +544,179 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 
 			case SLIDE_OBJECT_TYPES.text:
 			case SLIDE_OBJECT_TYPES.placeholder:
-				// Lines can have zero cy, but text should not
-				if (!slideItemObj.options.line && cy === 0) cy = EMU * 0.3
+				if (slideItemObj.options.line.isConnector) {
+					let shapeName = slideItemObj.options.shapeName ? encodeXmlEntities(slideItemObj.options.shapeName) : `Object${idx + 1}`
 
-				// Margin/Padding/Inset for textboxes
-				if (!slideItemObj.options._bodyProp) slideItemObj.options._bodyProp = {}
-				if (slideItemObj.options.margin && Array.isArray(slideItemObj.options.margin)) {
-					slideItemObj.options._bodyProp.lIns = valToPts(slideItemObj.options.margin[0] || 0)
-					slideItemObj.options._bodyProp.rIns = valToPts(slideItemObj.options.margin[1] || 0)
-					slideItemObj.options._bodyProp.bIns = valToPts(slideItemObj.options.margin[2] || 0)
-					slideItemObj.options._bodyProp.tIns = valToPts(slideItemObj.options.margin[3] || 0)
-				} else if (typeof slideItemObj.options.margin === 'number') {
-					slideItemObj.options._bodyProp.lIns = valToPts(slideItemObj.options.margin)
-					slideItemObj.options._bodyProp.rIns = valToPts(slideItemObj.options.margin)
-					slideItemObj.options._bodyProp.bIns = valToPts(slideItemObj.options.margin)
-					slideItemObj.options._bodyProp.tIns = valToPts(slideItemObj.options.margin)
-				}
+					// Lines can have zero cy, but text should not
+					if (!slideItemObj.options.line && cy === 0) cy = EMU * 0.3
 
-				// A: Start SHAPE =======================================================
-				strSlideXml += '<p:sp>'
+					// Margin/Padding/Inset for textboxes
+					if (!slideItemObj.options._bodyProp) slideItemObj.options._bodyProp = {}
+					if (slideItemObj.options.margin && Array.isArray(slideItemObj.options.margin)) {
+						slideItemObj.options._bodyProp.lIns = valToPts(slideItemObj.options.margin[0] || 0)
+						slideItemObj.options._bodyProp.rIns = valToPts(slideItemObj.options.margin[1] || 0)
+						slideItemObj.options._bodyProp.bIns = valToPts(slideItemObj.options.margin[2] || 0)
+						slideItemObj.options._bodyProp.tIns = valToPts(slideItemObj.options.margin[3] || 0)
+					} else if (typeof slideItemObj.options.margin === 'number') {
+						slideItemObj.options._bodyProp.lIns = valToPts(slideItemObj.options.margin)
+						slideItemObj.options._bodyProp.rIns = valToPts(slideItemObj.options.margin)
+						slideItemObj.options._bodyProp.bIns = valToPts(slideItemObj.options.margin)
+						slideItemObj.options._bodyProp.tIns = valToPts(slideItemObj.options.margin)
+					}
 
-				// B: The addition of the "txBox" attribute is the sole determiner of if an object is a shape or textbox
-				strSlideXml += `<p:nvSpPr><p:cNvPr id="${idx + 2}" name="${slideItemObj.options.objectName}">`
-				// <Hyperlink>
-				if (slideItemObj.options.hyperlink?.url) {
-					strSlideXml += `<a:hlinkClick r:id="rId${slideItemObj.options.hyperlink._rId}" tooltip="${slideItemObj.options.hyperlink.tooltip ? encodeXmlEntities(slideItemObj.options.hyperlink.tooltip) : ''}"/>`
-				}
-				if (slideItemObj.options.hyperlink?.slide) {
-					strSlideXml += `<a:hlinkClick r:id="rId${slideItemObj.options.hyperlink._rId}" tooltip="${slideItemObj.options.hyperlink.tooltip ? encodeXmlEntities(slideItemObj.options.hyperlink.tooltip) : ''}" action="ppaction://hlinksldjump"/>`
-				}
-				// </Hyperlink>
-				strSlideXml += '</p:cNvPr>'
-				strSlideXml += '<p:cNvSpPr' + (slideItemObj.options?.isTextBox ? ' txBox="1"/>' : '/>')
-				strSlideXml += `<p:nvPr>${slideItemObj._type === 'placeholder' ? genXmlPlaceholder(slideItemObj) : genXmlPlaceholder(placeholderObj)}</p:nvPr>`
-				strSlideXml += '</p:nvSpPr><p:spPr>'
-				strSlideXml += `<a:xfrm${locationAttr}>`
-				strSlideXml += `<a:off x="${x}" y="${y}"/>`
-				strSlideXml += `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`
+					// A: Start SHAPE =======================================================
+					strSlideXml += '<p:cxnSp>'
 
-				if (slideItemObj.shape === 'custGeom') {
-					strSlideXml += '<a:custGeom><a:avLst />'
-					strSlideXml += '<a:gdLst>'
-					strSlideXml += '</a:gdLst>'
-					strSlideXml += '<a:ahLst />'
-					strSlideXml += '<a:cxnLst>'
-					strSlideXml += '</a:cxnLst>'
-					strSlideXml += '<a:rect l="l" t="t" r="r" b="b" />'
+					// B: The addition of the "txBox" attribute is the sole determiner of if an object is a shape or textbox
+					if (slideItemObj.options.sId != undefined) {
+						strSlideXml += `<p:nvCxnSpPr><p:cNvPr id="${slideItemObj.options.sId}" name="${shapeName}">`
+					}
+					else {
+						strSlideXml += `<p:nvCxnSpPr><p:cNvPr id="${idx + 2}" name="${shapeName}">`
+					}
+					strSlideXml += '</p:cNvPr>'
+					//TODO add idx feature
+					strSlideXml += `<p:cNvCxnSpPr> 
+										<a:stCxn id="${slideItemObj.options.line.sourceId}" idx="${slideItemObj.options.line.sourceAnchorPos}" /> 
+										<a:endCxn id="${slideItemObj.options.line.targetId}" idx="${slideItemObj.options.line.targetAnchorPos}" />
+									</p:cNvCxnSpPr>` ;
+					strSlideXml += '<p:nvPr/>'
+					strSlideXml += '</p:nvCxnSpPr><p:spPr>'
+					strSlideXml += `<a:xfrm${locationAttr}>`
+					strSlideXml += `<a:off x="${x}" y="${y}"/>`
+					strSlideXml += `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`
 
-					strSlideXml += '<a:pathLst>'
-					strSlideXml += `<a:path w="${cx}" h="${cy}">`
+					strSlideXml += '<a:prstGeom prst="' + slideItemObj.shape + '"><a:avLst>'
+					if (slideItemObj.options.angleRange) {
+						for (let i = 0; i < 2; i++) {
+							const angle = slideItemObj.options.angleRange[i]
+							strSlideXml += `<a:gd name="adj${i + 1}" fmla="val ${convertRotationDegrees(angle)}" />`
+						}
+
+						if (slideItemObj.options.arcThicknessRatio) {
+							strSlideXml += `<a:gd name="adj3" fmla="val ${Math.round(slideItemObj.options.arcThicknessRatio * 50000)}" />`
+						}
+					}
+
+					if (slideItemObj.options.line.curveadjust) {
+						let i = 1
+						for (const adjustments in slideItemObj.options.line.curveadjust) {
+							strSlideXml += `<a:gd name="adj${i}" fmla="val ${getSmartParseNumber(adjustments, "X", slide._presLayout)}" />`
+							i++
+						}
+
+					}
+
+
+					strSlideXml += '</a:avLst></a:prstGeom>'
+
+
+					// Option: FILL
+					strSlideXml += slideItemObj.options.fill ? genXmlColorSelection(slideItemObj.options.fill) : '<a:noFill/>'
+
+					// shape Type: LINE: line color
+					if (slideItemObj.options.line) {
+						strSlideXml += slideItemObj.options.line.width ? `<a:ln w="${valToPts(slideItemObj.options.line.width)}">` : '<a:ln>'
+						if (slideItemObj.options.line.color) strSlideXml += genXmlColorSelection(slideItemObj.options.line)
+						if (slideItemObj.options.line.dashType) strSlideXml += `<a:prstDash val="${slideItemObj.options.line.dashType}"/>`
+						if (slideItemObj.options.line.beginArrowType) strSlideXml += `<a:headEnd type="${slideItemObj.options.line.beginArrowType}"/>`
+						if (slideItemObj.options.line.endArrowType) strSlideXml += `<a:tailEnd type="${slideItemObj.options.line.endArrowType}"/>`
+						// FUTURE: `endArrowSize` < a: headEnd type = "arrow" w = "lg" len = "lg" /> 'sm' | 'med' | 'lg'(values are 1 - 9, making a 3x3 grid of w / len possibilities)
+						strSlideXml += '</a:ln>'
+					}
+
+					// EFFECTS > SHADOW: REF: @see http://officeopenxml.com/drwSp-effects.php
+					if (slideItemObj.options.shadow) {
+						slideItemObj.options.shadow.type = slideItemObj.options.shadow.type || 'outer'
+						slideItemObj.options.shadow.blur = valToPts(slideItemObj.options.shadow.blur || 8)
+						slideItemObj.options.shadow.offset = valToPts(slideItemObj.options.shadow.offset || 4)
+						slideItemObj.options.shadow.angle = Math.round((slideItemObj.options.shadow.angle || 270) * 60000)
+						slideItemObj.options.shadow.opacity = Math.round((slideItemObj.options.shadow.opacity || 0.75) * 100000)
+						slideItemObj.options.shadow.color = slideItemObj.options.shadow.color || DEF_TEXT_SHADOW.color
+
+						strSlideXml += '<a:effectLst>'
+						strSlideXml += '<a:' + slideItemObj.options.shadow.type + 'Shdw sx="100000" sy="100000" kx="0" ky="0" '
+						strSlideXml += ' algn="bl" rotWithShape="0" blurRad="' + slideItemObj.options.shadow.blur + '" '
+						strSlideXml += ' dist="' + slideItemObj.options.shadow.offset + '" dir="' + slideItemObj.options.shadow.angle + '">'
+						strSlideXml += '<a:srgbClr val="' + slideItemObj.options.shadow.color + '">'
+						strSlideXml += '<a:alpha val="' + slideItemObj.options.shadow.opacity + '"/></a:srgbClr>'
+						strSlideXml += '</a:outerShdw>'
+						strSlideXml += '</a:effectLst>'
+					}
+
+					// B: Close shape Properties
+					strSlideXml += '</p:spPr>'
+
+					// C: Add formatted text (text body "bodyPr")
+					strSlideXml += genXmlTextBody(slideItemObj)
+
+					// LAST: Close SHAPE =======================================================
+					strSlideXml += '</p:cxnSp>'
+				} else {
+					let shapeName = slideItemObj.options.shapeName ? encodeXmlEntities(slideItemObj.options.shapeName) : `Object${idx + 1}`
+
+					// Lines can have zero cy, but text should not
+					if (!slideItemObj.options.line && cy === 0) cy = EMU * 0.3
+
+					// Margin/Padding/Inset for textboxes
+					if (!slideItemObj.options._bodyProp) slideItemObj.options._bodyProp = {}
+					if (slideItemObj.options.margin && Array.isArray(slideItemObj.options.margin)) {
+						slideItemObj.options._bodyProp.lIns = valToPts(slideItemObj.options.margin[0] || 0)
+						slideItemObj.options._bodyProp.rIns = valToPts(slideItemObj.options.margin[1] || 0)
+						slideItemObj.options._bodyProp.bIns = valToPts(slideItemObj.options.margin[2] || 0)
+						slideItemObj.options._bodyProp.tIns = valToPts(slideItemObj.options.margin[3] || 0)
+					} else if (typeof slideItemObj.options.margin === 'number') {
+						slideItemObj.options._bodyProp.lIns = valToPts(slideItemObj.options.margin)
+						slideItemObj.options._bodyProp.rIns = valToPts(slideItemObj.options.margin)
+						slideItemObj.options._bodyProp.bIns = valToPts(slideItemObj.options.margin)
+						slideItemObj.options._bodyProp.tIns = valToPts(slideItemObj.options.margin)
+					}
+
+					// A: Start SHAPE =======================================================
+					strSlideXml += '<p:sp>'
+
+					// B: The addition of the "txBox" attribute is the sole determiner of if an object is a shape or textbox
+					if (slideItemObj.options.sId != undefined) {
+						strSlideXml += `<p:nvSpPr><p:cNvPr id="${slideItemObj.options.sId}" name="${shapeName}">`
+					}
+					else {
+						strSlideXml += `<p:nvSpPr><p:cNvPr id="${idx + 2}" name="${shapeName}">`
+					}
+					// <Hyperlink>
+					if (slideItemObj.options.hyperlink && slideItemObj.options.hyperlink.url)
+						strSlideXml +=
+							'<a:hlinkClick r:id="rId' +
+							slideItemObj.options.hyperlink._rId +
+							'" tooltip="' +
+							(slideItemObj.options.hyperlink.tooltip ? encodeXmlEntities(slideItemObj.options.hyperlink.tooltip) : '') +
+							'"/>'
+					if (slideItemObj.options.hyperlink && slideItemObj.options.hyperlink.slide)
+						strSlideXml +=
+							'<a:hlinkClick r:id="rId' +
+							slideItemObj.options.hyperlink._rId +
+							'" tooltip="' +
+							(slideItemObj.options.hyperlink.tooltip ? encodeXmlEntities(slideItemObj.options.hyperlink.tooltip) : '') +
+							'" action="ppaction://hlinksldjump"/>'
+					// </Hyperlink>
+					strSlideXml += '</p:cNvPr>'
+					strSlideXml += '<p:cNvSpPr' + (slideItemObj.options && slideItemObj.options.isTextBox ? ' txBox="1"/>' : '/>')
+					strSlideXml += `<p:nvPr>${slideItemObj._type === 'placeholder' ? genXmlPlaceholder(slideItemObj) : genXmlPlaceholder(placeholderObj)}</p:nvPr>`
+					strSlideXml += '</p:nvSpPr><p:spPr>'
+					strSlideXml += `<a:xfrm${locationAttr}>`
+					strSlideXml += `<a:off x="${x}" y="${y}"/>`
+					strSlideXml += `<a:ext cx="${cx}" cy="${cy}"/></a:xfrm>`
+
+					if (slideItemObj.shape === 'custGeom') {
+						strSlideXml += '<a:custGeom><a:avLst />'
+						strSlideXml += '<a:gdLst>'
+						strSlideXml += '</a:gdLst>'
+						strSlideXml += '<a:ahLst />'
+						strSlideXml += '<a:cxnLst>'
+						strSlideXml += '</a:cxnLst>'
+						strSlideXml += '<a:rect l="l" t="t" r="r" b="b" />'
+
+						strSlideXml += '<a:pathLst>'
+						strSlideXml += `<a:path w="${cx}" h="${cy}">`
 
 					slideItemObj.options.points?.forEach((point, i) => {
 						if ('curve' in point) {
@@ -454,66 +734,66 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 									<a:pt x="${getSmartParseNumber(point.curve.x2, 'X', slide._presLayout)}" y="${getSmartParseNumber(point.curve.y2, 'Y', slide._presLayout)}" />
 									<a:pt x="${getSmartParseNumber(point.x, 'X', slide._presLayout)}" y="${getSmartParseNumber(point.y, 'Y', slide._presLayout)}" />
 									</a:cubicBezTo>`
-									break
-								case 'quadratic':
-									strSlideXml += `<a:quadBezTo>
+										break
+									case 'quadratic':
+										strSlideXml += `<a:quadBezTo>
 									<a:pt x="${getSmartParseNumber(point.curve.x1, 'X', slide._presLayout)}" y="${getSmartParseNumber(point.curve.y1, 'Y', slide._presLayout)}" />
 									<a:pt x="${getSmartParseNumber(point.x, 'X', slide._presLayout)}" y="${getSmartParseNumber(point.y, 'Y', slide._presLayout)}" />
 									</a:quadBezTo>`
-									break
-								default:
-									break
+										break
+									default:
+										break
+								}
+							} else if ('close' in point) {
+								strSlideXml += `<a:close />`
+							} else if (point.moveTo || i === 0) {
+								strSlideXml += `<a:moveTo><a:pt x="${getSmartParseNumber(point.x, 'X', slide._presLayout)}" y="${getSmartParseNumber(
+									point.y,
+									'Y',
+									slide._presLayout
+								)}" /></a:moveTo>`
+							} else {
+								strSlideXml += `<a:lnTo><a:pt x="${getSmartParseNumber(point.x, 'X', slide._presLayout)}" y="${getSmartParseNumber(
+									point.y,
+									'Y',
+									slide._presLayout
+								)}" /></a:lnTo>`
 							}
-						} else if ('close' in point) {
-							strSlideXml += '<a:close />'
-						} else if (point.moveTo || i === 0) {
-							strSlideXml += `<a:moveTo><a:pt x="${getSmartParseNumber(point.x, 'X', slide._presLayout)}" y="${getSmartParseNumber(
-								point.y,
-								'Y',
-								slide._presLayout
-							)}" /></a:moveTo>`
-						} else {
-							strSlideXml += `<a:lnTo><a:pt x="${getSmartParseNumber(point.x, 'X', slide._presLayout)}" y="${getSmartParseNumber(
-								point.y,
-								'Y',
-								slide._presLayout
-							)}" /></a:lnTo>`
-						}
-					})
+						})
 
-					strSlideXml += '</a:path>'
-					strSlideXml += '</a:pathLst>'
-					strSlideXml += '</a:custGeom>'
-				} else {
-					strSlideXml += '<a:prstGeom prst="' + slideItemObj.shape + '"><a:avLst>'
-					if (slideItemObj.options.rectRadius) {
-						strSlideXml += `<a:gd name="adj" fmla="val ${Math.round((slideItemObj.options.rectRadius * EMU * 100000) / Math.min(cx, cy))}"/>`
-					} else if (slideItemObj.options.angleRange) {
-						for (let i = 0; i < 2; i++) {
-							const angle = slideItemObj.options.angleRange[i]
-							strSlideXml += `<a:gd name="adj${i + 1}" fmla="val ${convertRotationDegrees(angle)}" />`
-						}
+						strSlideXml += '</a:path>'
+						strSlideXml += '</a:pathLst>'
+						strSlideXml += '</a:custGeom>'
+					} else {
+						strSlideXml += '<a:prstGeom prst="' + slideItemObj.shape + '"><a:avLst>'
+						if (slideItemObj.options.rectRadius) {
+							strSlideXml += `<a:gd name="adj" fmla="val ${Math.round((slideItemObj.options.rectRadius * EMU * 100000) / Math.min(cx, cy))}"/>`
+						} else if (slideItemObj.options.angleRange) {
+							for (let i = 0; i < 2; i++) {
+								const angle = slideItemObj.options.angleRange[i]
+								strSlideXml += `<a:gd name="adj${i + 1}" fmla="val ${convertRotationDegrees(angle)}" />`
+							}
 
-						if (slideItemObj.options.arcThicknessRatio) {
-							strSlideXml += `<a:gd name="adj3" fmla="val ${Math.round(slideItemObj.options.arcThicknessRatio * 50000)}" />`
+							if (slideItemObj.options.arcThicknessRatio) {
+								strSlideXml += `<a:gd name="adj3" fmla="val ${Math.round(slideItemObj.options.arcThicknessRatio * 50000)}" />`
+							}
 						}
+						strSlideXml += '</a:avLst></a:prstGeom>'
 					}
-					strSlideXml += '</a:avLst></a:prstGeom>'
-				}
 
-				// Option: FILL
-				strSlideXml += slideItemObj.options.fill ? genXmlColorSelection(slideItemObj.options.fill) : '<a:noFill/>'
+					// Option: FILL
+					strSlideXml += slideItemObj.options.fill ? genXmlColorSelection(slideItemObj.options.fill) : '<a:noFill/>'
 
-				// shape Type: LINE: line color
-				if (slideItemObj.options.line) {
-					strSlideXml += slideItemObj.options.line.width ? `<a:ln w="${valToPts(slideItemObj.options.line.width)}">` : '<a:ln>'
-					if (slideItemObj.options.line.color) strSlideXml += genXmlColorSelection(slideItemObj.options.line)
-					if (slideItemObj.options.line.dashType) strSlideXml += `<a:prstDash val="${slideItemObj.options.line.dashType}"/>`
-					if (slideItemObj.options.line.beginArrowType) strSlideXml += `<a:headEnd type="${slideItemObj.options.line.beginArrowType}"/>`
-					if (slideItemObj.options.line.endArrowType) strSlideXml += `<a:tailEnd type="${slideItemObj.options.line.endArrowType}"/>`
-					// FUTURE: `endArrowSize` < a: headEnd type = "arrow" w = "lg" len = "lg" /> 'sm' | 'med' | 'lg'(values are 1 - 9, making a 3x3 grid of w / len possibilities)
-					strSlideXml += '</a:ln>'
-				}
+					// shape Type: LINE: line color
+					if (slideItemObj.options.line) {
+						strSlideXml += slideItemObj.options.line.width ? `<a:ln w="${valToPts(slideItemObj.options.line.width)}">` : '<a:ln>'
+						if (slideItemObj.options.line.color) strSlideXml += genXmlColorSelection(slideItemObj.options.line)
+						if (slideItemObj.options.line.dashType) strSlideXml += `<a:prstDash val="${slideItemObj.options.line.dashType}"/>`
+						if (slideItemObj.options.line.beginArrowType) strSlideXml += `<a:headEnd type="${slideItemObj.options.line.beginArrowType}"/>`
+						if (slideItemObj.options.line.endArrowType) strSlideXml += `<a:tailEnd type="${slideItemObj.options.line.endArrowType}"/>`
+						// FUTURE: `endArrowSize` < a: headEnd type = "arrow" w = "lg" len = "lg" /> 'sm' | 'med' | 'lg'(values are 1 - 9, making a 3x3 grid of w / len possibilities)
+						strSlideXml += '</a:ln>'
+					}
 
 				// EFFECTS > SHADOW: REF: @see http://officeopenxml.com/drwSp-effects.php
 				if (slideItemObj.options.shadow && slideItemObj.options.shadow.type !== 'none') {
@@ -524,13 +804,15 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 					slideItemObj.options.shadow.opacity = Math.round((slideItemObj.options.shadow.opacity || 0.75) * 100000)
 					slideItemObj.options.shadow.color = slideItemObj.options.shadow.color || DEF_TEXT_SHADOW.color
 
-					strSlideXml += '<a:effectLst>'
-					strSlideXml += ` <a:${slideItemObj.options.shadow.type}Shdw ${slideItemObj.options.shadow.type === 'outer' ? 'sx="100000" sy="100000" kx="0" ky="0" algn="bl" rotWithShape="0"' : ''} blurRad="${slideItemObj.options.shadow.blur}" dist="${slideItemObj.options.shadow.offset}" dir="${slideItemObj.options.shadow.angle}">`
-					strSlideXml += ` <a:srgbClr val="${slideItemObj.options.shadow.color}">`
-					strSlideXml += ` <a:alpha val="${slideItemObj.options.shadow.opacity}"/></a:srgbClr>`
-					strSlideXml += ' </a:outerShdw>'
-					strSlideXml += '</a:effectLst>'
-				}
+						strSlideXml += '<a:effectLst>'
+						strSlideXml += '<a:' + slideItemObj.options.shadow.type + 'Shdw sx="100000" sy="100000" kx="0" ky="0" '
+						strSlideXml += ' algn="bl" rotWithShape="0" blurRad="' + slideItemObj.options.shadow.blur + '" '
+						strSlideXml += ' dist="' + slideItemObj.options.shadow.offset + '" dir="' + slideItemObj.options.shadow.angle + '">'
+						strSlideXml += '<a:srgbClr val="' + slideItemObj.options.shadow.color + '">'
+						strSlideXml += '<a:alpha val="' + slideItemObj.options.shadow.opacity + '"/></a:srgbClr>'
+						strSlideXml += '</a:outerShdw>'
+						strSlideXml += '</a:effectLst>'
+					}
 
 				/* TODO: FUTURE: Text wrapping (copied from MS-PPTX export)
 					// Commented out b/c i'm not even sure this works - current code produces text that wraps in shapes and textboxes, so...
@@ -543,30 +825,31 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 					}
 				*/
 
-				// B: Close shape Properties
-				strSlideXml += '</p:spPr>'
+					// B: Close shape Properties
+					strSlideXml += '</p:spPr>'
 
-				// C: Add formatted text (text body "bodyPr")
-				strSlideXml += genXmlTextBody(slideItemObj)
+					// C: Add formatted text (text body "bodyPr")
+					strSlideXml += genXmlTextBody(slideItemObj)
 
-				// LAST: Close SHAPE =======================================================
-				strSlideXml += '</p:sp>'
+					// LAST: Close SHAPE =======================================================
+					strSlideXml += '</p:sp>'
+				}
 				break
 
 			case SLIDE_OBJECT_TYPES.image:
 				strSlideXml += '<p:pic>'
 				strSlideXml += '  <p:nvPicPr>'
-				strSlideXml += `<p:cNvPr id="${idx + 2}" name="${slideItemObj.options.objectName}" descr="${encodeXmlEntities(
-					slideItemObj.options.altText || slideItemObj.image
-				)}">`
-				if (slideItemObj.hyperlink?.url) {
-					strSlideXml += `<a:hlinkClick r:id="rId${slideItemObj.hyperlink._rId}" tooltip="${slideItemObj.hyperlink.tooltip ? encodeXmlEntities(slideItemObj.hyperlink.tooltip) : ''
-					}"/>`
+				if (slideItemObj.options.sId != undefined) {
+					strSlideXml += `<p:cNvPr id="${slideItemObj.options.sId}" name="Object ${idx + 1}" descr="${encodeXmlEntities(imageOpts.altText || slideItemObj.image)}">`
+				} else {
+					strSlideXml += `<p:cNvPr id="${idx + 2}" name="Object ${idx + 1}" descr="${encodeXmlEntities(imageOpts.altText || slideItemObj.image)}">`
 				}
-				if (slideItemObj.hyperlink?.slide) {
+				if (slideItemObj.hyperlink && slideItemObj.hyperlink.url)
 					strSlideXml += `<a:hlinkClick r:id="rId${slideItemObj.hyperlink._rId}" tooltip="${slideItemObj.hyperlink.tooltip ? encodeXmlEntities(slideItemObj.hyperlink.tooltip) : ''
-					}" action="ppaction://hlinksldjump"/>`
-				}
+						}"/>`
+				if (slideItemObj.hyperlink && slideItemObj.hyperlink.slide)
+					strSlideXml += `<a:hlinkClick r:id="rId${slideItemObj.hyperlink._rId}" tooltip="${slideItemObj.hyperlink.tooltip ? encodeXmlEntities(slideItemObj.hyperlink.tooltip) : ''
+						}" action="ppaction://hlinksldjump"/>`
 				strSlideXml += '    </p:cNvPr>'
 				strSlideXml += '    <p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr>'
 				strSlideXml += '    <p:nvPr>' + genXmlPlaceholder(placeholderObj) + '</p:nvPr>'
@@ -676,7 +959,11 @@ function slideObjectToXml (slide: PresSlide | SlideLayout): string {
 			case SLIDE_OBJECT_TYPES.chart:
 				strSlideXml += '<p:graphicFrame>'
 				strSlideXml += ' <p:nvGraphicFramePr>'
-				strSlideXml += `   <p:cNvPr id="${idx + 2}" name="${slideItemObj.options.objectName}" descr="${encodeXmlEntities(slideItemObj.options.altText || '')}"/>`
+				if (slideItemObj.options.sId != undefined) {
+					strSlideXml += `   <p:cNvPr id="${slideItemObj.options.sId}" name="Chart ${idx + 1}" descr="${encodeXmlEntities(chartOpts.altText || '')}"/>`
+				} else {
+					strSlideXml += `   <p:cNvPr id="${idx + 2}" name="Chart ${idx + 1}" descr="${encodeXmlEntities(chartOpts.altText || '')}"/>`
+				}
 				strSlideXml += '   <p:cNvGraphicFramePr/>'
 				strSlideXml += `   <p:nvPr>${genXmlPlaceholder(placeholderObj)}</p:nvPr>`
 				strSlideXml += ' </p:nvGraphicFramePr>'
@@ -903,7 +1190,8 @@ function genXmlParagraphProperties (textObj: ISlideObject | TextProps, isDefault
 					bulletCode = BULLET_TYPES.DEFAULT
 				}
 
-				paragraphPropXml += ` marL="${textObj.options.indentLevel && textObj.options.indentLevel > 0 ? bulletMarL + bulletMarL * textObj.options.indentLevel : bulletMarL
+				paragraphPropXml += ` marL="${
+					textObj.options.indentLevel && textObj.options.indentLevel > 0 ? bulletMarL + bulletMarL * textObj.options.indentLevel : bulletMarL
 				}" indent="-${bulletMarL}"`
 				strXmlBullet = '<a:buSzPct val="100000"/><a:buChar char="' + bulletCode + '"/>'
 			} else if (textObj.options.bullet.code) {
@@ -1408,10 +1696,13 @@ export function makeXmlContTypes (slides: PresSlide[], slideLayouts: SlideLayout
 
 	// STEP 4: Add Slide Layouts
 	slideLayouts.forEach((layout, idx) => {
-		strXml += `<Override PartName="/ppt/slideLayouts/slideLayout${idx + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>`
-		; (layout._relsChart || []).forEach(rel => {
-			strXml += ' <Override PartName="' + rel.Target + '" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'
-		})
+		strXml +=
+			'<Override PartName="/ppt/slideLayouts/slideLayout' +
+			(idx + 1) +
+			'.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>'
+			; (layout._relsChart || []).forEach(rel => {
+				strXml += ' <Override PartName="' + rel.Target + '" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'
+			})
 	})
 
 	// STEP 5: Add notes slide(s)
